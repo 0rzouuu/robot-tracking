@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maarif Robot Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="connection-banner" id="connectionBanner">Connection lost &mdash; retrying...</div>
+    <div class="overlay" id="overlay"></div>
+    <div class="confirmation-dialog" id="shutdownDialog">
+        <h3>Shutdown Raspberry Pi?</h3>
+        <p>This will stop all robot functions and power off the system.</p>
+        <div class="dialog-buttons">
+            <button class="dialog-btn confirm" onclick="confirmShutdown()">Shutdown</button>
+            <button class="dialog-btn cancel" onclick="cancelShutdown()">Cancel</button>
+        </div>
+    </div>
+    <div class="notification" id="notification"></div>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <img src="{{ url_for('static', filename='logo.png') }}" alt="Maarif" class="school-logo">
+            <div class="header-text">
+                <h1>Robot Tracking System</h1>
+                <div class="subtitle">International Maarif Schools &bull; Tunisia</div>
+            </div>
+        </div>
+        <span class="header-badge manual" id="headerBadge">MANUAL</span>
+    </div>
+
+    <!-- Main: Camera + Controls -->
+    <div class="main">
+        <div>
+            <!-- Camera Feeds -->
+            <div class="card">
+                <div class="card-title">Camera Feeds</div>
+                <div class="video-grid">
+                    <div class="video-container">
+                        <img src="{{ url_for('video_feed') }}" alt="Camera">
+                        <div class="video-label">LIVE</div>
+                        <div class="video-overlay" id="videoOverlay">Ready</div>
+                    </div>
+                    <div class="video-container">
+                        <img src="{{ url_for('mask_feed') }}" alt="Mask">
+                        <div class="video-label">MASK</div>
+                    </div>
+                </div>
+                <div class="hsv-preview">
+                    <span id="hsvValues">H:20-42 S:80-255 V:80-255</span>
+                </div>
+            </div>
+
+            <!-- Trajectory -->
+            <div class="card" style="margin-top: 12px;">
+                <div class="card-title toggle" onclick="toggleCard(this)">Trajectory <span class="chevron">&#9660;</span></div>
+                <div class="card-body">
+                    <canvas id="trajectoryCanvas" width="640" height="480"></canvas>
+                    <div style="margin-top: 6px;">
+                        <button class="btn btn-muted" onclick="clearTrajectory()">Clear Trail</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar Controls -->
+        <div class="sidebar">
+            <!-- Mode -->
+            <div class="card">
+                <div class="card-title">Mode</div>
+                <div class="mode-toggle">
+                    <button class="mode-btn manual active" id="manualBtn" onclick="setMode('manual')">Manual</button>
+                    <button class="mode-btn automatic" id="autoBtn" onclick="setMode('automatic')">Auto</button>
+                </div>
+            </div>
+
+            <!-- Movement -->
+            <div class="card">
+                <div class="card-title">Movement</div>
+                <div class="movement-pad" id="movementPad">
+                    <div class="movement-grid">
+                        <div></div>
+                        <button class="control-btn forward"
+                                onmousedown="startContinuous('forward')"
+                                onmouseup="stopContinuous()"
+                                onmouseleave="stopContinuous()"
+                                ontouchstart="event.preventDefault(); startContinuous('forward')"
+                                ontouchend="event.preventDefault(); stopContinuous()">&#8593;</button>
+                        <div></div>
+                        <button class="control-btn left"
+                                onmousedown="startContinuous('left')"
+                                onmouseup="stopContinuous()"
+                                onmouseleave="stopContinuous()"
+                                ontouchstart="event.preventDefault(); startContinuous('left')"
+                                ontouchend="event.preventDefault(); stopContinuous()">&#8592;</button>
+                        <button class="control-btn stop"
+                                onmousedown="sendCommand('stop')"
+                                ontouchstart="event.preventDefault(); sendCommand('stop')">&#9632;</button>
+                        <button class="control-btn right"
+                                onmousedown="startContinuous('right')"
+                                onmouseup="stopContinuous()"
+                                onmouseleave="stopContinuous()"
+                                ontouchstart="event.preventDefault(); startContinuous('right')"
+                                ontouchend="event.preventDefault(); stopContinuous()">&#8594;</button>
+                        <div></div>
+                        <button class="control-btn reverse"
+                                onmousedown="startContinuous('reverse')"
+                                onmouseup="stopContinuous()"
+                                onmouseleave="stopContinuous()"
+                                ontouchstart="event.preventDefault(); startContinuous('reverse')"
+                                ontouchend="event.preventDefault(); stopContinuous()">&#8595;</button>
+                        <div></div>
+                    </div>
+                    <p class="mode-warning" id="modeWarning"></p>
+                </div>
+                <div class="keyboard-help" id="keyboardHelp">
+                    <h4>Keyboard</h4>
+                    <div class="key-grid">
+                        <div class="key-item"><span class="key">W</span><span class="key">Z</span> Forward</div>
+                        <div class="key-item"><span class="key">S</span> Reverse</div>
+                        <div class="key-item"><span class="key">A</span><span class="key">Q</span> Left</div>
+                        <div class="key-item"><span class="key">D</span> Right</div>
+                    </div>
+                    <p style="color: var(--danger); margin-top: 4px; font-size: 11px; display: none;" id="keyboardWarning">Disabled in AUTO mode</p>
+                </div>
+            </div>
+
+            <!-- Speed -->
+            <div class="card">
+                <div class="card-title">Speed</div>
+                <div class="slider-group">
+                    <label>Motor <span id="speedVal" class="value-display">70</span>%</label>
+                    <input type="range" id="speedSlider" min="10" max="100" value="70" step="5" oninput="updateSpeed(this.value)">
+                </div>
+            </div>
+
+            <!-- Status -->
+            <div class="card collapsed">
+                <div class="card-title toggle" onclick="toggleCard(this)">Status <span class="chevron">&#9660;</span></div>
+                <div class="card-body">
+                    <div class="status-grid">
+                        <div class="status-item"><span class="status-label">Mode</span><span class="status-value" id="modeDisplay">manual</span></div>
+                        <div class="status-item"><span class="status-label">Dir</span><span class="status-value" id="directionDisplay">stop</span></div>
+                        <div class="status-item"><span class="status-label">Moving</span><span class="status-value" id="movingDisplay">no</span></div>
+                        <div class="status-item"><span class="status-label">Camera</span><span class="status-value" id="cameraDisplay">active</span></div>
+                        <div class="status-item"><span class="status-label">GPIO</span><span class="status-value" id="gpioDisplay">--</span></div>
+                        <div class="status-item"><span class="status-label">Speed</span><span class="status-value" id="speedDisplay">70%</span></div>
+                        <div class="status-item"><span class="status-label">Keys</span><span class="status-value" id="keysDisplay">none</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="card">
+                <div class="buttons-row">
+                    <button class="btn btn-danger" onclick="emergencyStop()">EMERGENCY STOP</button>
+                    <button class="btn btn-shutdown" id="shutdownBtn" onclick="showShutdownDialog()">Shutdown Pi</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="advanced">
+        <div class="card collapsed" style="margin-bottom: 12px;">
+            <div class="card-title toggle" onclick="toggleCard(this)">Advanced Settings <span class="chevron">&#9660;</span></div>
+            <div class="card-body">
+                <div class="advanced-grid">
+                    <!-- HSV Color Detection -->
+                    <div class="card">
+                        <div class="card-title">Color Detection (HSV)</div>
+                        <div class="slider-group">
+                            <label>Hue Lower <span id="hueLowerVal" class="value-display">20</span></label>
+                            <input type="range" id="hueLower" min="0" max="179" value="20" oninput="updateHSV('hueLower', this.value)">
+                        </div>
+                        <div class="slider-group">
+                            <label>Hue Upper <span id="hueUpperVal" class="value-display">42</span></label>
+                            <input type="range" id="hueUpper" min="0" max="179" value="42" oninput="updateHSV('hueUpper', this.value)">
+                        </div>
+                        <div class="slider-group">
+                            <label>Hue2 Lower <span id="hue2LowerVal" class="value-display">0</span></label>
+                            <input type="range" id="hue2Lower" min="0" max="179" value="0" oninput="updateHSV('hue2Lower', this.value)">
+                        </div>
+                        <div class="slider-group">
+                            <label>Hue2 Upper <span id="hue2UpperVal" class="value-display">0</span></label>
+                            <input type="range" id="hue2Upper" min="0" max="179" value="0" oninput="updateHSV('hue2Upper', this.value)">
+                        </div>
+                        <div class="slider-group">
+                            <label>Sat Low <span id="satLowVal" class="value-display">80</span></label>
+                            <input type="range" id="satLow" min="0" max="255" value="80" oninput="updateHSV('satLow', this.value)">
+                        </div>
+                        <div class="slider-group">
+                            <label>Sat High <span id="satHighVal" class="value-display">255</span></label>
+                            <input type="range" id="satHigh" min="0" max="255" value="255" oninput="updateHSV('satHigh', this.value)">
+                        </div>
+                        <div class="slider-group">
+                            <label>Val Low <span id="valLowVal" class="value-display">80</span></label>
+                            <input type="range" id="valLow" min="0" max="255" value="80" oninput="updateHSV('valLow', this.value)">
+                        </div>
+                        <div class="slider-group">
+                            <label>Val High <span id="valHighVal" class="value-display">255</span></label>
+                            <input type="range" id="valHigh" min="0" max="255" value="255" oninput="updateHSV('valHigh', this.value)">
+                        </div>
+                        <button class="btn btn-muted" onclick="resetHSV()" style="margin-top: 6px;">Reset HSV</button>
+                    </div>
+
+                    <!-- PID + Target -->
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                        <!-- Target Parameters -->
+                        <div class="card">
+                            <div class="card-title">Target Parameters</div>
+                            <div class="slider-group">
+                                <label>Target Area <span id="targetAreaVal" class="value-display">5000</span></label>
+                                <input type="range" id="targetArea" min="1000" max="15000" value="5000" step="100" oninput="updateFollowParam('targetArea', this.value)">
+                            </div>
+                            <div class="slider-group">
+                                <label>Area Tolerance <span id="areaToleranceVal" class="value-display">1000</span></label>
+                                <input type="range" id="areaTolerance" min="100" max="3000" value="1000" step="50" oninput="updateFollowParam('areaTolerance', this.value)">
+                            </div>
+                            <div class="slider-group">
+                                <label>Center Tolerance <span id="centerToleranceVal" class="value-display">30</span>px</label>
+                                <input type="range" id="centerTolerance" min="5" max="100" value="30" step="5" oninput="updateFollowParam('centerTolerance', this.value)">
+                            </div>
+                        </div>
+
+                        <!-- PID Steering -->
+                        <div class="card">
+                            <div class="card-title">PID - Steering</div>
+                            <div class="slider-group">
+                                <label>Kp <span id="panKpVal" class="value-display">0.200</span></label>
+                                <input type="range" id="panKp" min="0" max="1" step="0.01" value="0.2" oninput="updatePID('panKp', this.value)">
+                            </div>
+                            <div class="slider-group">
+                                <label>Ki <span id="panKiVal" class="value-display">0.010</span></label>
+                                <input type="range" id="panKi" min="0" max="0.1" step="0.001" value="0.01" oninput="updatePID('panKi', this.value)">
+                            </div>
+                            <div class="slider-group">
+                                <label>Kd <span id="panKdVal" class="value-display">0.050</span></label>
+                                <input type="range" id="panKd" min="0" max="0.5" step="0.01" value="0.05" oninput="updatePID('panKd', this.value)">
+                            </div>
+                        </div>
+
+                        <!-- PID Distance -->
+                        <div class="card">
+                            <div class="card-title">PID - Distance</div>
+                            <div class="slider-group">
+                                <label>Kp <span id="distKpVal" class="value-display">0.005</span></label>
+                                <input type="range" id="distKp" min="0" max="0.05" step="0.001" value="0.005" oninput="updatePID('distKp', this.value)">
+                            </div>
+                            <div class="slider-group">
+                                <label>Ki <span id="distKiVal" class="value-display">0.001</span></label>
+                                <input type="range" id="distKi" min="0" max="0.01" step="0.0005" value="0.001" oninput="updatePID('distKi', this.value)">
+                            </div>
+                            <div class="slider-group">
+                                <label>Kd <span id="distKdVal" class="value-display">0.002</span></label>
+                                <input type="range" id="distKd" min="0" max="0.02" step="0.001" value="0.002" oninput="updatePID('distKd', this.value)">
+                            </div>
+                        </div>
+
+                        <button class="btn btn-muted" onclick="resetPID()">Reset All PID</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">International Maarif Schools &bull; Tunisia &bull; Robot Tracking Project</div>
+
+    <script>
+        var continuousInterval = null;
+        var currentAction = null;
+        var activeKeys = new Set();
+        var currentMode = 'manual';
+        var connectionLost = false;
+
+        var keyMap = {
+            'ArrowUp': 'forward', 'ArrowDown': 'reverse',
+            'ArrowLeft': 'left', 'ArrowRight': 'right',
+            'z': 'forward', 'Z': 'forward', 'w': 'forward', 'W': 'forward',
+            's': 'reverse', 'S': 'reverse',
+            'q': 'left', 'Q': 'left', 'a': 'left', 'A': 'left',
+            'd': 'right', 'D': 'right',
+            ' ': 'stop', 'Space': 'stop'
+        };
+
+        function toggleCard(titleEl) {
+            titleEl.parentElement.classList.toggle('collapsed');
+        }
+
+        function showNotification(message, type) {
+            type = type || 'success';
+            var el = document.getElementById('notification');
+            el.textContent = message;
+            el.style.backgroundColor = type === 'success' ? '#00b4b4' : '#ef4444';
+            el.style.display = 'block';
+            setTimeout(function() { el.style.display = 'none'; }, 2000);
+        }
+
+        function showShutdownDialog() {
+            document.getElementById('overlay').style.display = 'block';
+            document.getElementById('shutdownDialog').style.display = 'block';
+        }
+
+        function cancelShutdown() {
+            document.getElementById('overlay').style.display = 'none';
+            document.getElementById('shutdownDialog').style.display = 'none';
+        }
+
+        function confirmShutdown() {
+            var btn = document.getElementById('shutdownBtn');
+            btn.textContent = 'Shutting down...';
+            btn.classList.add('shutting-down');
+            btn.disabled = true;
+            showNotification('Shutting down...', 'error');
+            fetch('/shutdown', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            cancelShutdown();
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            var badge = document.getElementById('headerBadge');
+            if (mode === 'manual') {
+                document.getElementById('manualBtn').classList.add('active');
+                document.getElementById('autoBtn').classList.remove('active');
+                document.getElementById('movementPad').classList.remove('disabled');
+                document.getElementById('keyboardHelp').classList.remove('disabled');
+                document.getElementById('keyboardWarning').style.display = 'none';
+                badge.className = 'header-badge manual';
+                badge.textContent = 'MANUAL';
+                document.getElementById('modeWarning').textContent = '';
+            } else {
+                document.getElementById('autoBtn').classList.add('active');
+                document.getElementById('manualBtn').classList.remove('active');
+                document.getElementById('movementPad').classList.add('disabled');
+                document.getElementById('keyboardHelp').classList.add('disabled');
+                document.getElementById('keyboardWarning').style.display = 'block';
+                badge.className = 'header-badge automatic';
+                badge.textContent = 'AUTO';
+                document.getElementById('modeWarning').textContent = 'Controls disabled in AUTO mode';
+            }
+            fetch('/set_mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function() {
+                showNotification('Mode: ' + mode);
+                stopContinuous();
+                activeKeys.clear();
+                updateKeysDisplay();
+            });
+        }
+
+        function updateFollowParam(param, value) {
+            document.getElementById(param + 'Val').textContent = value;
+            fetch('/update_follow_params', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    targetArea: document.getElementById('targetArea').value,
+                    areaTolerance: document.getElementById('areaTolerance').value,
+                    centerTolerance: document.getElementById('centerTolerance').value
+                })
+            });
+        }
+
+        function sendCommand(action) {
+            fetch('/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action, duration: 0.1 })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'error') showNotification(data.message, 'error');
+            });
+        }
+
+        function startContinuous(action) {
+            if (currentMode !== 'manual') {
+                showNotification('Disabled in AUTO mode', 'error');
+                return;
+            }
+            if (currentAction === action) return;
+            if (continuousInterval) clearInterval(continuousInterval);
+            currentAction = action;
+
+            fetch('/continuous_control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action, state: 'pressed' })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'error') { showNotification(data.message, 'error'); currentAction = null; }
+            });
+
+            document.querySelectorAll('.control-btn').forEach(function(b) { b.classList.remove('active'); });
+            var ab = document.querySelector('.control-btn.' + action);
+            if (ab) ab.classList.add('active');
+
+            continuousInterval = setInterval(function() {
+                if (currentAction && currentMode === 'manual') {
+                    fetch('/continuous_control', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: currentAction, state: 'pressed' })
+                    });
+                }
+            }, 100);
+        }
+
+        function stopContinuous() {
+            if (currentAction) {
+                fetch('/continuous_control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: currentAction, state: 'released' })
+                });
+                currentAction = null;
+                if (continuousInterval) { clearInterval(continuousInterval); continuousInterval = null; }
+                document.querySelectorAll('.control-btn').forEach(function(b) { b.classList.remove('active'); });
+            }
+        }
+
+        document.addEventListener('keydown', function(e) {
+            var action = keyMap[e.key];
+            if (action) {
+                e.preventDefault();
+                if (currentMode !== 'manual') { showNotification('Disabled in AUTO mode', 'error'); return; }
+                if (!activeKeys.has(action)) {
+                    activeKeys.add(action);
+                    if (action === 'stop') emergencyStop();
+                    else startContinuous(action);
+                    updateKeysDisplay();
+                }
+            }
+        });
+
+        document.addEventListener('keyup', function(e) {
+            var action = keyMap[e.key];
+            if (action && currentMode === 'manual') {
+                e.preventDefault();
+                if (activeKeys.has(action)) {
+                    activeKeys.delete(action);
+                    if (activeKeys.size > 0) {
+                        var next = Array.from(activeKeys)[0];
+                        if (next !== 'stop') startContinuous(next);
+                    } else {
+                        stopContinuous();
+                    }
+                    updateKeysDisplay();
+                }
+            }
+        });
+
+        window.addEventListener('keydown', function(e) {
+            if (e.key.startsWith('Arrow') || [' ','z','q','s','d','w','a','Z','Q','S','D','W','A'].includes(e.key))
+                e.preventDefault();
+        }, false);
+
+        function updateKeysDisplay() {
+            var el = document.getElementById('keysDisplay');
+            el.textContent = activeKeys.size > 0 ? Array.from(activeKeys).join(', ') : 'none';
+        }
+
+        function updateSpeed(value) {
+            document.getElementById('speedVal').textContent = value;
+            fetch('/set_speed', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ speed: parseInt(value) })
+            });
+        }
+
+        function emergencyStop() {
+            stopContinuous();
+            activeKeys.clear();
+            fetch('/emergency_stop', { method: 'POST' }).then(function() {
+                showNotification('EMERGENCY STOP', 'error');
+                updateStatus();
+            });
+        }
+
+        function updateStatus() {
+            fetch('/get_robot_status')
+                .then(function(r) { if (!r.ok) throw new Error(); return r.json(); })
+                .then(function(data) {
+                    if (connectionLost) {
+                        connectionLost = false;
+                        document.getElementById('connectionBanner').style.display = 'none';
+                        showNotification('Reconnected');
+                    }
+                    document.getElementById('modeDisplay').textContent = data.mode;
+                    document.getElementById('directionDisplay').textContent = data.direction;
+                    document.getElementById('movingDisplay').textContent = data.moving ? 'yes' : 'no';
+                    document.getElementById('movingDisplay').style.color = data.moving ? '#f59e0b' : '#00d4a0';
+                    document.getElementById('cameraDisplay').textContent = data.camera_running ? 'active' : 'stopped';
+                    var gpioEl = document.getElementById('gpioDisplay');
+                    gpioEl.textContent = data.gpio_ready ? 'ready' : 'FAILED';
+                    gpioEl.style.color = data.gpio_ready ? '#00d4a0' : '#ef4444';
+                    document.getElementById('speedDisplay').textContent = (data.speed || 70) + '%';
+                    document.getElementById('targetAreaVal').textContent = data.target_area || 5000;
+                    document.getElementById('areaToleranceVal').textContent = data.area_tolerance || 1000;
+                    document.getElementById('centerToleranceVal').textContent = data.center_tolerance || 30;
+                    document.getElementById('videoOverlay').textContent = data.mode.toUpperCase() + ' | ' + data.direction;
+                    if (data.mode !== currentMode) setMode(data.mode);
+                })
+                .catch(function() {
+                    if (!connectionLost) {
+                        connectionLost = true;
+                        document.getElementById('connectionBanner').style.display = 'block';
+                    }
+                });
+        }
+
+        var hsvTimer = null;
+        function updateHSV(param, value) {
+            if (param) document.getElementById(param + 'Val').textContent = value;
+            var p = {
+                hueLower: document.getElementById('hueLower').value,
+                hueUpper: document.getElementById('hueUpper').value,
+                hue2Lower: document.getElementById('hue2Lower').value,
+                hue2Upper: document.getElementById('hue2Upper').value,
+                satLow: document.getElementById('satLow').value,
+                satHigh: document.getElementById('satHigh').value,
+                valLow: document.getElementById('valLow').value,
+                valHigh: document.getElementById('valHigh').value
+            };
+            document.getElementById('hsvValues').textContent =
+                'H:' + p.hueLower + '-' + p.hueUpper +
+                ' H2:' + p.hue2Lower + '-' + p.hue2Upper +
+                ' S:' + p.satLow + '-' + p.satHigh +
+                ' V:' + p.valLow + '-' + p.valHigh;
+            clearTimeout(hsvTimer);
+            hsvTimer = setTimeout(function() {
+                fetch('/update_hsv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+            }, 150);
+        }
+
+        function resetHSV() {
+            var d = { hueLower:20, hueUpper:42, hue2Lower:0, hue2Upper:0, satLow:80, satHigh:255, valLow:80, valHigh:255 };
+            for (var k in d) { document.getElementById(k).value = d[k]; document.getElementById(k+'Val').textContent = d[k]; }
+            updateHSV();
+            showNotification('HSV reset');
+        }
+
+        function formatPID(v) {
+            v = parseFloat(v);
+            if (v < 0.01) return v.toFixed(4);
+            return v.toFixed(3);
+        }
+
+        var pidTimer = null;
+        function updatePID(param, value) {
+            document.getElementById(param + 'Val').textContent = formatPID(value);
+            clearTimeout(pidTimer);
+            pidTimer = setTimeout(function() {
+                fetch('/update_pid', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        panKp: parseFloat(document.getElementById('panKp').value),
+                        panKi: parseFloat(document.getElementById('panKi').value),
+                        panKd: parseFloat(document.getElementById('panKd').value),
+                        distKp: parseFloat(document.getElementById('distKp').value),
+                        distKi: parseFloat(document.getElementById('distKi').value),
+                        distKd: parseFloat(document.getElementById('distKd').value)
+                    })
+                });
+            }, 200);
+        }
+
+        function resetPID() {
+            var d = { panKp:0.2, panKi:0.01, panKd:0.05, distKp:0.005, distKi:0.001, distKd:0.002 };
+            for (var k in d) {
+                document.getElementById(k).value = d[k];
+                document.getElementById(k + 'Val').textContent = formatPID(d[k]);
+            }
+            updatePID('panKp', 0.2);
+            showNotification('PID reset');
+        }
+
+        function drawTrajectory() {
+            fetch('/get_trajectory')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var c = document.getElementById('trajectoryCanvas');
+                    var ctx = c.getContext('2d');
+                    var pts = data.points;
+                    ctx.clearRect(0, 0, 640, 480);
+
+                    ctx.strokeStyle = 'rgba(0,180,180,0.06)';
+                    ctx.lineWidth = 1;
+                    for (var x = 0; x < 640; x += 80) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,480); ctx.stroke(); }
+                    for (var y = 0; y < 480; y += 80) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(640,y); ctx.stroke(); }
+
+                    ctx.strokeStyle = 'rgba(0,180,180,0.3)';
+                    ctx.setLineDash([4,4]);
+                    ctx.beginPath(); ctx.moveTo(320,0); ctx.lineTo(320,480); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0,240); ctx.lineTo(640,240); ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    var tol = parseInt(document.getElementById('centerTolerance').value) || 30;
+                    ctx.fillStyle = 'rgba(0,180,180,0.05)';
+                    ctx.fillRect(320 - tol, 0, tol * 2, 480);
+
+                    if (pts.length > 1) {
+                        for (var i = 1; i < pts.length; i++) {
+                            var a = i / pts.length;
+                            ctx.strokeStyle = 'rgba(0,' + Math.floor(180 + 75*a) + ',' + Math.floor(180 + 75*a) + ',' + (0.3 + 0.7*a) + ')';
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            ctx.moveTo(pts[i-1][0], pts[i-1][1]);
+                            ctx.lineTo(pts[i][0], pts[i][1]);
+                            ctx.stroke();
+                        }
+                        var last = pts[pts.length - 1];
+                        ctx.fillStyle = '#00b4b4';
+                        ctx.shadowColor = '#00b4b4';
+                        ctx.shadowBlur = 10;
+                        ctx.beginPath();
+                        ctx.arc(last[0], last[1], 5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                    }
+                    if (pts.length === 0) {
+                        ctx.fillStyle = 'rgba(0,180,180,0.25)';
+                        ctx.font = '14px monospace';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('Waiting for object detection...', 320, 240);
+                    }
+                })
+                .catch(function() {});
+        }
+
+        function clearTrajectory() {
+            fetch('/clear_trajectory', { method: 'POST' }).then(function() {
+                showNotification('Trail cleared');
+                drawTrajectory();
+            });
+        }
+
+        fetch('/get_hsv').then(function(r) { return r.json(); }).then(function(data) {
+            for (var k in data) {
+                if (document.getElementById(k)) {
+                    document.getElementById(k).value = data[k];
+                    document.getElementById(k + 'Val').textContent = data[k];
+                }
+            }
+            updateHSV();
+        });
+
+        fetch('/get_pid').then(function(r) { return r.json(); }).then(function(data) {
+            for (var k in data) {
+                if (document.getElementById(k)) {
+                    document.getElementById(k).value = data[k];
+                    document.getElementById(k + 'Val').textContent = formatPID(data[k]);
+                }
+            }
+        });
+
+        setInterval(updateStatus, 500);
+        setInterval(drawTrajectory, 300);
+
+        document.querySelectorAll('input').forEach(function(input) {
+            input.addEventListener('focus', function() { activeKeys.clear(); stopContinuous(); });
+        });
+    </script>
+</body>
+</html>
